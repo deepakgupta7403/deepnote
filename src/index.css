@@ -1,0 +1,118 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =========================================================
+   Base styles — premium feel, both themes
+   ========================================================= */
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply font-sans bg-ink-50 text-ink-900 antialiased;
+    font-feature-settings: 'ss01', 'cv11';
+  }
+  .dark body {
+    @apply bg-ink-950 text-ink-100;
+  }
+  ::selection {
+    @apply bg-accent-500/30 text-ink-900;
+  }
+  .dark ::selection {
+    @apply bg-accent-500/40 text-white;
+  }
+  /* Custom scrollbar */
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb {
+    @apply bg-ink-200 rounded-full border-2 border-solid border-transparent bg-clip-padding;
+  }
+  .dark *::-webkit-scrollbar-thumb {
+    @apply bg-ink-700;
+  }
+}
+
+/* =========================================================
+   Reusable component classes
+   ========================================================= */
+@layer components {
+  /* Glass card — frosted surface used throughout */
+  .glass {
+    @apply bg-white/70 backdrop-blur-xl border border-ink-200/60 shadow-soft;
+  }
+  .dark .glass {
+    @apply bg-ink-900/60 border-ink-700/50;
+  }
+
+  /* Solid card */
+  .card {
+    @apply bg-white border border-ink-200 rounded-2xl shadow-soft;
+  }
+  .dark .card {
+    @apply bg-ink-900 border-ink-800;
+  }
+
+  /* Inputs */
+  .input {
+    @apply w-full px-4 py-2.5 rounded-xl bg-white border border-ink-200
+           text-ink-900 placeholder-ink-400 outline-none transition
+           focus:border-accent-500 focus:ring-4 focus:ring-accent-500/10;
+  }
+  .dark .input {
+    @apply bg-ink-900 border-ink-700 text-ink-100 placeholder-ink-500;
+  }
+
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5
+           rounded-xl font-medium text-sm transition-all duration-200
+           focus:outline-none focus:ring-4 disabled:opacity-50 disabled:cursor-not-allowed
+           active:scale-[0.98];
+  }
+  .btn-primary {
+    @apply btn bg-ink-900 text-white hover:bg-ink-800 focus:ring-ink-900/20
+           shadow-soft;
+  }
+  .dark .btn-primary {
+    @apply bg-white text-ink-900 hover:bg-ink-100 focus:ring-white/20;
+  }
+  .btn-secondary {
+    @apply btn bg-ink-100 text-ink-800 hover:bg-ink-200 focus:ring-ink-300/40;
+  }
+  .dark .btn-secondary {
+    @apply bg-ink-800 text-ink-100 hover:bg-ink-700 focus:ring-ink-600/40;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent text-ink-700 hover:bg-ink-100 focus:ring-ink-200/50;
+  }
+  .dark .btn-ghost {
+    @apply text-ink-300 hover:bg-ink-800 focus:ring-ink-700/50;
+  }
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-700 focus:ring-red-500/30;
+  }
+
+  /* Subtle textured background — light noise & gradient */
+  .surface {
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(15,15,25,0.04) 1px, transparent 0);
+    background-size: 24px 24px;
+  }
+  .dark .surface {
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(255,255,255,0.035) 1px, transparent 0);
+    background-size: 24px 24px;
+  }
+}
+
+/* =========================================================
+   Utility tweaks
+   ========================================================= */
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  .text-balance { text-wrap: balance; }
+}
