@@ -7,6 +7,7 @@ import { useApp } from '../context/AppContext.jsx'
 import { useTheme } from '../context/ThemeContext.jsx'
 import { useToast } from '../context/ToastContext.jsx'
 import ConfirmDialog from '../components/ui/ConfirmDialog.jsx'
+import SignInCard from '../components/auth/SignInCard.jsx'
 
 /**
  * Settings — theme toggle, export / import JSON, clear data.
@@ -58,6 +59,9 @@ export default function Settings() {
 
   return (
     <div className="space-y-6 animate-fade-in max-w-3xl">
+      {/* Sync / Sign in */}
+      <SignInCard />
+
       {/* Appearance */}
       <section className="card p-6">
         <h3 className="font-display text-2xl tracking-tight mb-1">Appearance</h3>

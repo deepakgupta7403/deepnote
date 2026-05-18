@@ -1,28 +1,127 @@
-import { createContext, useCallback, useContext, useMemo } from 'react'
+import {
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
+} from 'react'
 import useLocalStorage from '../hooks/useLocalStorage.js'
 import { STORAGE_KEYS } from '../utils/storage.js'
 import { uid } from '../utils/helpers.js'
+import { useAuth } from './AuthContext.jsx'
+import { readRemote, writeRemote, subscribeRemote } from '../utils/sync.js'
 
 const AppContext = createContext(null)
 
 /**
- * AppProvider — the single source of truth for app data.
+ * AppProvider — single source of truth for app data.
  *
- * Holds:
- *  - tasks      : [{ id, title, notes, priority, due, completed, label, createdAt, completedAt, order }]
- *  - notes      : [{ id, title, body, label, updatedAt, createdAt }]
- *  - checklists : [{ id, title, label, items: [{ id, text, done }], updatedAt, createdAt }]
- *  - activity   : recent log of actions for the dashboard
- *
- * All persisted via useLocalStorage so refreshes are lossless.
+ * Storage strategy ("local-first with optional cloud"):
+ *   1. Always read/write localStorage so the app works offline.
+ *   2. If a Firebase user is signed in, ALSO sync to/from Firestore via
+ *      a live snapshot subscription.
+ *   3. Every local mutation is pushed to Firestore (debounced 700ms).
  */
 export function AppProvider({ children }) {
   const [tasks, setTasks] = useLocalStorage(STORAGE_KEYS.TASKS, [])
   const [notes, setNotes] = useLocalStorage(STORAGE_KEYS.NOTES, [])
   const [checklists, setChecklists] = useLocalStorage(STORAGE_KEYS.CHECKLISTS, [])
   const [activity, setActivity] = useLocalStorage(STORAGE_KEYS.ACTIVITY, [])
+  const [syncStatus, setSyncStatus] = useState('idle') // idle | syncing | synced | error | offline
 
-  // -------- Activity log (cap at 30 entries) --------
+  const { user, firebaseEnabled } = useAuth() || { user: null, firebaseEnabled: false }
+
+  const remoteWriteTimer = useRef(null)
+  const skipNextRemoteEcho = useRef(false) // ignore the next snapshot if it's our own write
+  const hasInitialized = useRef(false)
+
+  // ---------- Sync engine ----------
+  useEffect(() => {
+    if (!firebaseEnabled || !user) {
+      setSyncStatus(firebaseEnabled ? 'offline' : 'idle')
+      hasInitialized.current = false
+      return
+    }
+
+    let unsub = () => {}
+    let cancelled = false
+
+    const init = async () => {
+      setSyncStatus('syncing')
+      try {
+        const remote = await readRemote(user.uid)
+        if (cancelled) return
+
+        const localEmpty = !tasks.length && !notes.length && !checklists.length
+
+        if (!remote) {
+          // First sign-in: upload local snapshot.
+          await writeRemote(user.uid, { tasks, notes, checklists, activity })
+        } else {
+          const remoteEmpty =
+            !(remote.tasks?.length) && !(remote.notes?.length) && !(remote.checklists?.length)
+
+          if (localEmpty && !remoteEmpty) {
+            // Fresh device — pull remote.
+            skipNextRemoteEcho.current = true
+            setTasks(remote.tasks || [])
+            setNotes(remote.notes || [])
+            setChecklists(remote.checklists || [])
+            setActivity(remote.activity || [])
+          } else if (!localEmpty && remoteEmpty) {
+            // Local has data, cloud is empty — push local.
+            await writeRemote(user.uid, { tasks, notes, checklists, activity })
+          } else {
+            // Both have data — prefer remote so devices converge.
+            skipNextRemoteEcho.current = true
+            setTasks(remote.tasks || [])
+            setNotes(remote.notes || [])
+            setChecklists(remote.checklists || [])
+            setActivity(remote.activity || [])
+          }
+        }
+
+        hasInitialized.current = true
+        setSyncStatus('synced')
+
+        // Real-time subscription
+        unsub = subscribeRemote(user.uid, (data) => {
+          if (skipNextRemoteEcho.current) {
+            skipNextRemoteEcho.current = false
+            return
+          }
+          setTasks(data.tasks || [])
+          setNotes(data.notes || [])
+          setChecklists(data.checklists || [])
+          setActivity(data.activity || [])
+          setSyncStatus('synced')
+        })
+      } catch (err) {
+        console.error('Sync init failed:', err)
+        setSyncStatus('error')
+      }
+    }
+
+    init()
+    return () => { cancelled = true; unsub() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid, firebaseEnabled])
+
+  // Debounced push of local changes to Firestore
+  useEffect(() => {
+    if (!firebaseEnabled || !user || !hasInitialized.current) return
+    clearTimeout(remoteWriteTimer.current)
+    remoteWriteTimer.current = setTimeout(async () => {
+      try {
+        setSyncStatus('syncing')
+        skipNextRemoteEcho.current = true
+        await writeRemote(user.uid, { tasks, notes, checklists, activity })
+        setSyncStatus('synced')
+      } catch (err) {
+        console.error('Remote write failed:', err)
+        setSyncStatus('error')
+      }
+    }, 700)
+    return () => clearTimeout(remoteWriteTimer.current)
+  }, [tasks, notes, checklists, activity, user, firebaseEnabled])
+
+  // ---------- Activity log ----------
   const log = useCallback((type, text) => {
     setActivity(prev => {
       const next = [{ id: uid(), type, text, at: new Date().toISOString() }, ...prev]
@@ -30,7 +129,7 @@ export function AppProvider({ children }) {
     })
   }, [setActivity])
 
-  // -------- TASKS --------
+  // ---------- TASKS ----------
   const addTask = useCallback((partial) => {
     const task = {
       id: uid(),
@@ -70,13 +169,11 @@ export function AppProvider({ children }) {
     }))
   }, [setTasks, log])
 
-  // Reorder tasks: receives a new array (used by drag-and-drop)
   const reorderTasks = useCallback((newList) => {
-    // Re-stamp `order` based on new index so it persists meaningfully
     setTasks(newList.map((t, i) => ({ ...t, order: i })))
   }, [setTasks])
 
-  // -------- NOTES --------
+  // ---------- NOTES ----------
   const addNote = useCallback((partial = {}) => {
     const note = {
       id: uid(),
@@ -87,7 +184,7 @@ export function AppProvider({ children }) {
       updatedAt: new Date().toISOString(),
     }
     setNotes(prev => [note, ...prev])
-    log('note', `Created a note`)
+    log('note', 'Created a note')
     return note
   }, [setNotes, log])
 
@@ -105,7 +202,7 @@ export function AppProvider({ children }) {
     })
   }, [setNotes, log])
 
-  // -------- CHECKLISTS --------
+  // ---------- CHECKLISTS ----------
   const addChecklist = useCallback((partial = {}) => {
     const cl = {
       id: uid(),
@@ -180,18 +277,15 @@ export function AppProvider({ children }) {
     }))
   }, [setChecklists])
 
-  // -------- DATA OPS --------
-  const exportData = useCallback(() => {
-    return {
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      tasks, notes, checklists,
-    }
-  }, [tasks, notes, checklists])
+  // ---------- DATA OPS ----------
+  const exportData = useCallback(() => ({
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    tasks, notes, checklists,
+  }), [tasks, notes, checklists])
 
   const importData = useCallback((data) => {
     if (!data || typeof data !== 'object') throw new Error('Invalid file')
-    // Be permissive — accept partial imports.
     if (Array.isArray(data.tasks)) setTasks(data.tasks)
     if (Array.isArray(data.notes)) setNotes(data.notes)
     if (Array.isArray(data.checklists)) setChecklists(data.checklists)
@@ -202,7 +296,7 @@ export function AppProvider({ children }) {
     setTasks([]); setNotes([]); setChecklists([]); setActivity([])
   }, [setTasks, setNotes, setChecklists, setActivity])
 
-  // -------- Derived stats --------
+  // ---------- Derived stats ----------
   const stats = useMemo(() => {
     const completed = tasks.filter(t => t.completed).length
     const pending = tasks.length - completed
@@ -223,16 +317,11 @@ export function AppProvider({ children }) {
   }, [tasks, notes, checklists])
 
   const value = {
-    // data
-    tasks, notes, checklists, activity, stats,
-    // tasks
+    tasks, notes, checklists, activity, stats, syncStatus,
     addTask, updateTask, deleteTask, toggleTask, reorderTasks,
-    // notes
     addNote, updateNote, deleteNote,
-    // checklists
     addChecklist, updateChecklist, deleteChecklist,
     addChecklistItem, toggleChecklistItem, updateChecklistItem, deleteChecklistItem,
-    // data ops
     exportData, importData, clearAll,
   }
 

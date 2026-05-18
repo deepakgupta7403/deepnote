@@ -19,9 +19,10 @@ Designed to deploy to **GitHub Pages** in two commands.
 - 📱 **Fully responsive** — mobile sidebar, two-pane editor, touch-friendly
 - 🔔 **Toast notifications** for every action
 - 🗑️ **Confirmation modals** before destructive actions
-- 💾 **Local persistence** via `localStorage` — survives refreshes
+- ☁️ **Optional cloud sync** via Firebase (magic-link email) — one tap to sign in, then your data syncs to every device in real time
+- 💾 **Local persistence** via `localStorage` — works fully offline, even without sync
 - ⬆️⬇️ **Export / Import** your data as JSON
-- 🧹 **Clear all data** with a single click
+- 🗑️ **Clear all data** with a single click
 
 ---
 
@@ -35,7 +36,8 @@ Designed to deploy to **GitHub Pages** in two commands.
 | Icons | React Icons (Feather + RX) |
 | Drag & drop | `@dnd-kit/core` + `@dnd-kit/sortable` |
 | State | React Context API + custom hooks |
-| Storage | `localStorage` (via `useLocalStorage`) |
+| Storage | `localStorage` (offline) + Firestore (optional sync) |
+| Auth | Firebase Email Link (passwordless) |
 | Deployment | `gh-pages` |
 
 ---
@@ -70,7 +72,137 @@ deepnote/
 
 ---
 
-## 🚀 Getting started
+## ☁️ Optional: Enable cloud sync (Firebase setup)
+
+Cloud sync is **completely optional**. Without it, deepnote runs in local-only mode.
+With it, your tasks/notes/checklists sync across every device you sign in on — using a
+magic-link email (no password, no signup form).
+
+**Total setup time: ~4 minutes.**
+
+### Step 1 — Create a Firebase project
+
+1. Go to <https://console.firebase.google.com/>
+2. Click **Add project**, give it a name (e.g. `deepnote-sync`), continue
+3. **Disable** Google Analytics (not needed) → **Create project**
+
+### Step 2 — Add a Web App
+
+1. On the project overview page, click the **`</>`** (Web) icon
+2. App nickname: `deepnote-web` → **Register app**
+3. Copy the `firebaseConfig` object that appears — you'll need it in step 5
+
+```js
+// Sample — your values will differ
+const firebaseConfig = {
+  apiKey:        "AIzaSyD-...",
+  authDomain:    "deepnote-sync.firebaseapp.com",
+  projectId:     "deepnote-sync",
+  storageBucket: "deepnote-sync.appspot.com",
+  messagingSenderId: "1234567890",
+  appId:         "1:1234567890:web:abc..."
+}
+```
+
+### Step 3 — Enable Email Link sign-in
+
+1. In the left sidebar, open **Build → Authentication**
+2. Click **Get started**
+3. Open the **Sign-in method** tab
+4. Click **Email/Password** → toggle **Email link (passwordless sign-in)** ON
+   *(leave the password toggle OFF — we don't use passwords)*
+5. **Save**
+
+### Step 4 — Whitelist your deployed domain
+
+In **Authentication → Settings → Authorized domains**, click **Add domain** and add:
+
+- `YOUR_GITHUB_USERNAME.github.io`
+- (`localhost` is already whitelisted by default for dev)
+
+### Step 5 — Create the Firestore database
+
+1. In the left sidebar, open **Build → Firestore Database**
+2. Click **Create database**
+3. Choose a region close to you → **Next**
+4. Pick **Start in production mode** → **Enable**
+
+### Step 6 — Set Firestore security rules
+
+In **Firestore Database → Rules**, replace the contents with:
+
+```js
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users can only read/write their own data
+    match /users/{uid}/data/{docId} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}
+```
+
+Click **Publish**.
+
+### Step 7 — Add the config to your local `.env`
+
+Copy `.env.example` to `.env` and paste in the values from step 2:
+
+```bash
+cp .env.example .env
+```
+
+```ini
+VITE_FIREBASE_API_KEY=AIzaSyD-...
+VITE_FIREBASE_AUTH_DOMAIN=deepnote-sync.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=deepnote-sync
+VITE_FIREBASE_STORAGE_BUCKET=deepnote-sync.appspot.com
+VITE_FIREBASE_MESSAGING_SENDER_ID=1234567890
+VITE_FIREBASE_APP_ID=1:1234567890:web:abc...
+```
+
+### Step 8 — Test it locally
+
+```bash
+npm run dev
+```
+
+Open **Settings**, enter your email, click **Send magic link**, open your inbox, click
+the link. You'll be redirected back, signed in, and your data is now syncing.
+
+### Step 9 — Deploy with sync enabled
+
+Vite bakes env vars into the build at build time, so `npm run build` automatically
+picks up your `.env`. Just deploy as usual:
+
+```bash
+npm run deploy
+```
+
+> **Note about secrets:** These Firebase env vars are *public* — they ship in the
+> JavaScript bundle. That's normal and safe: security comes from the **Firestore rules**
+> (step 6) which only let an authenticated user touch their own document, not from
+> hiding the API key.
+
+---
+
+## 🧱 Architecture: how sync works
+
+- 📴 **Local-first**: every write goes to `localStorage` first, so the app is always
+  instant and works offline.
+- ☁️ **Cloud overlay**: if signed in, a debounced (700ms) Firestore write fires after
+  each local change.
+- 🔄 **Real-time pull**: a Firestore `onSnapshot` listener pulls remote changes from
+  other devices instantly.
+- 🤝 **Merge on sign-in**:
+  - Local empty + remote has data → pull from cloud
+  - Local has data + remote empty → push to cloud
+  - Both have data → remote wins (so devices converge)
+- 🔐 **Per-user isolation**: data is stored at `users/{uid}/data/state`, with security
+  rules ensuring only that user can read/write it.
+
+
 
 ### 1. Prerequisites
 
@@ -224,7 +356,27 @@ GitHub Pages caches aggressively. Hard refresh: **Cmd/Ctrl + Shift + R**. Or wai
 
 ### LocalStorage data gone after deploying
 
-LocalStorage is **per-origin**. Your `localhost:5173` data lives at a different origin from `username.github.io`, so they don't share. Use **Export JSON → Import JSON** in Settings to migrate.
+LocalStorage is **per-origin**. Your `localhost:5173` data lives at a different origin from `username.github.io`, so they don't share. Use **Export JSON → Import JSON** in Settings to migrate — or sign in with the same email on both to sync via cloud.
+
+### Magic link goes to spam
+
+First emails from a fresh Firebase project sometimes land in spam. Add the sender (`noreply@your-project.firebaseapp.com`) to your contacts.
+
+### "auth/unauthorized-continue-uri" when sending magic link
+
+Your deployed domain isn't in the Firebase **Authorized domains** list. Add `YOUR_USERNAME.github.io` under **Authentication → Settings → Authorized domains**.
+
+### Magic link sends but clicking it shows "auth/invalid-action-code"
+
+The link is one-time-use and expires after 1 hour. Request a fresh one.
+
+### "Missing or insufficient permissions" in console
+
+Your Firestore security rules aren't set. Go back to **Step 6** in the Firebase setup section.
+
+### Magic link opens on a different device and asks for email again
+
+That's a security feature — Firebase remembers the email in `localStorage` on the device that *requested* the link. Opening on a new device prompts you to re-confirm. Just type it in.
 
 ### Build fails with `gh-pages` permission error
 

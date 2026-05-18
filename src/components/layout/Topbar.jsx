@@ -1,6 +1,7 @@
 import { FiMenu, FiSun, FiMoon } from 'react-icons/fi'
 import { useTheme } from '../../context/ThemeContext.jsx'
 import { useLocation } from 'react-router-dom'
+import SyncBadge from './SyncBadge.jsx'
 
 const TITLES = {
   '/':           { title: 'Dashboard',  sub: 'A bird’s-eye view of your day.' },
@@ -41,6 +42,8 @@ export default function Topbar({ onOpenSidebar }) {
             {meta.sub}
           </p>
         </div>
+
+        <SyncBadge />
 
         <button
           onClick={toggleTheme}
